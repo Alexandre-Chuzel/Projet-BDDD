@@ -93,13 +93,13 @@ def create_user(
     user: schemas.UserCreate,
     db: Session = Depends(get_db)
 ):
-    password = password.hash(
+    password_hashed = password.hash(
         user.password
     )
     new_user = models.User(
         name=user.name,
         email=user.email,
-        password=password
+        password=password_hashed
     )
 
     db.add(new_user)
