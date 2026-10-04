@@ -30,6 +30,7 @@ python -m uvicorn main:app --reload
 ```
 
 Swagger est disponible sur `http://127.0.0.1:8000/docs`.
+La page d'accueil propose également un lien vers Swagger et vers ReDoc.
 Le démarrage de l'API ne crée ni ne modifie les tables : seul Alembic gère le schéma.
 
 La migration `b001_initial_users` crée `users` sur une base vide, avant la
@@ -236,3 +237,6 @@ La connexion Oracle dans le conteneur doit utiliser une adresse accessible
 depuis Docker ; pour un port Oracle publié sur la machine hôte avec Docker
 Desktop, utiliser `DATABASE_HOST=host.docker.internal`. Appliquer les migrations
 avant de démarrer l'API ; l'image ne les exécute pas automatiquement.
+Si `DATABASE_URL` est défini, il prend la priorité sur les variables
+`DATABASE_HOST`, `DATABASE_USER`, etc. Son adresse doit donc elle aussi être
+accessible depuis le conteneur.
