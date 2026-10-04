@@ -1,4 +1,4 @@
-"""Test manuel sur Oracle : deux demandes pour le dernier exemplaire.
+"""Test manuel sur Oracle : emprunts et clôtures simultanés.
 
 À lancer depuis le projet : python tests/oracle_concurrency.py
 Les données dédiées au test sont créées puis supprimées dans le bloc finally.
@@ -17,9 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import engine
-from loans import borrow_book, return_book, utc_now
+from loans import admin_close_loan, borrow_book, return_book, utc_now
 from models import Author, Book, BookCopy, Loan, User, book_authors
-from schemas import LoanCreate
+from schemas import LoanClosure, LoanCreate
 from security import password
 
 
@@ -37,6 +37,7 @@ def main():
             users = [User(first_name='Test', last_name='Concurrence',
                           email=f'race-{suffix}-{i}@example.com',
                           password_hash=password.hash('test-oracle-password')) for i in range(2)]
+            users[0].role = 'ADMIN'
             author = Author(first_name='Test', last_name='Concurrence')
             book = Book(title='Test concurrence ' + suffix, genre='Test', authors=[author])
             copy = BookCopy(book=book, inventory_code='RACE-' + suffix.upper())
@@ -74,13 +75,39 @@ def main():
                 db.rollback()
             else:
                 raise AssertionError('La base doit refuser un deuxième emprunt actif')
-        with Session(engine, autoflush=False) as db:
-            returned = return_book(winner[1], user=db.get(User, winner[2]), db=db)
-            assert returned.closure_reason == 'RETURNED'
+        barrier = Barrier(2)
+        def close_attempt(by_admin):
+            with Session(engine, autoflush=False) as db:
+                actor = db.get(User, user_ids[0] if by_admin else winner[2])
+                barrier.wait(timeout=10)
+                try:
+                    if by_admin:
+                        result = admin_close_loan(winner[1], LoanClosure(copy_status='DAMAGED'), admin=actor, db=db)
+                    else:
+                        result = return_book(winner[1], user=actor, db=db)
+                    assert result.closure_reason == 'RETURNED'
+                    return 200, by_admin
+                except HTTPException as error:
+                    db.rollback()
+                    return error.status_code, by_admin
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(close_attempt, by_admin) for by_admin in [False, True]]
+            closures = [future.result(timeout=30) for future in futures]
+        assert sorted(result[0] for result in closures) == [200, 409], 'Une seule clôture doit réussir'
+        closed_by_admin = next(result[1] for result in closures if result[0] == 200)
+        with Session(engine) as db:
+            copy = db.get(BookCopy, copy_id)
+            assert copy.service_status == ('DAMAGED' if closed_by_admin else 'IN_SERVICE')
+            loan = db.get(Loan, winner[1])
+            assert loan.closed_by_id == (user_ids[0] if closed_by_admin else winner[2])
+            # Remise en service de l'exemplaire dédié au test après un retour abîmé.
+            copy.service_status = 'IN_SERVICE'
+            db.commit()
         with Session(engine, autoflush=False) as db:
             new_loan = borrow_book(LoanCreate(book_id=book_id), user=db.get(User, user_ids[0]), db=db)
             assert new_loan.copy_id == copy_id
-        print('Oracle : un succès 201, un refus 409 ; contrainte unique, retour et réemprunt validés.')
+        print('Oracle : emprunts 201/409 et clôtures 200/409 ; contrainte unique, état et réemprunt validés.')
     finally:
         # Seuls les identifiants créés par ce test sont supprimés.
         with Session(engine) as db:

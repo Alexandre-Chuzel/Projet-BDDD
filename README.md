@@ -159,8 +159,32 @@ dans leur transaction. L'index unique protège aussi la base contre deux
 emprunts en cours sur le même exemplaire. La disponibilité est recalculée
 depuis les exemplaires et les emprunts à chaque consultation.
 
-La supervision permettant à un administrateur d'emprunter ou de clôturer
-pour un autre compte, ainsi que les retours abîmés et les pertes, reste à ajouter.
+## Supervision administrateur
+
+- `POST /admin/loans` avec `{"user_id": 2, "book_id": 1}` : enregistrer
+  un emprunt pour un compte actif. Les contrôles de liste noire, de livre actif
+  et de disponibilité s'appliquent également. L'emprunt apparaît dans
+  l'historique du bénéficiaire.
+- `POST /admin/loans/{loan_id}/close` avec `{"copy_status": "IN_SERVICE"}` :
+  enregistrer un retour en bon état pour le compte concerné.
+- La même route avec `{"copy_status": "DAMAGED"}` enregistre un retour abîmé ;
+  l'emprunt est clôturé avec `RETURNED`, mais l'exemplaire reste indisponible.
+- Avec `{"copy_status": "LOST"}`, elle clôture pour perte avec le motif `LOST`.
+  L'exemplaire reste dans le stock total et ne peut plus être emprunté.
+
+Ces routes sont réservées aux administrateurs. La clôture conserve leur
+identifiant dans `closed_by_id`. Elle reste possible pour un bénéficiaire sur
+liste noire ou désactivé, mais un emprunt déjà clôturé est refusé avec 409.
+Un retour personnel continue à passer par `/loans/{loan_id}/return`.
+
+Après réparation ou récupération, l'administrateur remet l'exemplaire en
+service avec `PATCH /books/{book_id}/copies/{copy_id}` et
+`{"service_status": "IN_SERVICE"}`. L'ancien emprunt reste clôturé ; un nouveau
+prêt crée une nouvelle entrée dans l'historique.
+
+La clôture et le changement d'état sont enregistrés dans une même transaction.
+Le schéma de `l004_loans` contient déjà les informations nécessaires à cette
+supervision ; aucune migration supplémentaire n'est nécessaire.
 
 ## Premier administrateur
 
@@ -195,7 +219,9 @@ python tests/oracle_concurrency.py
 
 Il crée des données dédiées, lance deux demandes simultanées pour un seul
 exemplaire et attend un succès 201 et un refus 409. Il vérifie aussi la
-contrainte unique, le retour et le réemprunt. Ses données sont supprimées
+contrainte unique, deux clôtures simultanées (retour personnel et retour abîmé
+administrateur, avec un succès 200 et un refus 409), puis le réemprunt.
+Ses données sont supprimées
 dans un bloc `finally`. Les migrations doivent avoir été appliquées avant
 son lancement.
 

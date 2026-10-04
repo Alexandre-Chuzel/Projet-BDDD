@@ -169,3 +169,108 @@ def test_database_requires_coherent_closure(library, db, changes):
     db.add(loan)
     with pytest.raises(IntegrityError): db.commit()
     db.rollback()
+
+
+def admin_borrow(client, library, user='alice', expected=201):
+    response = client.post('/admin/loans', headers=library['admin_headers'], json={
+        'user_id': library[user].id, 'book_id': library['book'].id,
+    })
+    assert response.status_code == expected
+    return response.json()
+
+
+def admin_close(client, library, loan, status, expected=200):
+    response = client.post(f'/admin/loans/{loan["id"]}/close', headers=library['admin_headers'],
+                           json={'copy_status': status})
+    assert response.status_code == expected
+    return response.json()
+
+
+def test_admin_records_loan_for_borrower(client, library):
+    loan = admin_borrow(client, library)
+    assert loan['user_id'] == library['alice'].id
+    assert client.get('/loans/me', headers=library['alice_headers']).json()[0]['id'] == loan['id']
+    assert client.get('/loans/me', headers=library['admin_headers']).json() == []
+    assert stock(client, library)['available_stock'] == 1
+    admin_borrow(client, library, 'bob')
+    admin_borrow(client, library, expected=409)
+
+
+@pytest.mark.parametrize('status,reason,available', [
+    ('IN_SERVICE', 'RETURNED', 2), ('DAMAGED', 'RETURNED', 1), ('LOST', 'LOST', 1),
+])
+def test_admin_closure_updates_copy_and_history(client, library, db, status, reason, available):
+    loan = borrow(client, library)
+    result = admin_close(client, library, loan, status)
+    assert result['closure_reason'] == reason
+    assert result['closed_by_id'] == library['admin'].id
+    assert result['closed_at'] >= result['borrowed_at'] and result['is_active'] is False
+    assert db.get(BookCopy, loan['copy_id']).service_status == status
+    assert stock(client, library)['available_stock'] == available
+    assert stock(client, library)['total_stock'] == 2
+    admin_close(client, library, loan, 'IN_SERVICE', expected=409)
+    assert db.get(BookCopy, loan['copy_id']).service_status == status
+    assert client.post(f'/loans/{loan["id"]}/return', headers=library['alice_headers']).status_code == 409
+    assert client.get('/loans/me', headers=library['alice_headers']).json()[0]['closure_reason'] == reason
+
+
+@pytest.mark.parametrize('status', ['DAMAGED', 'LOST'])
+def test_repair_or_recovery_allows_new_loan_without_reopening_history(client, library, db, status):
+    loan = borrow(client, library)
+    admin_close(client, library, loan, status)
+    copy_url = f'/books/{library["book"].id}/copies/{loan["copy_id"]}'
+    assert client.patch(copy_url, headers=library['admin_headers'], json={'service_status': 'IN_SERVICE'}).status_code == 200
+    again = borrow(client, library)
+    assert again['copy_id'] == loan['copy_id'] and again['id'] != loan['id']
+    assert db.get(Loan, loan['id']).closed_at is not None
+    assert db.get(Loan, loan['id']).closure_reason == ('LOST' if status == 'LOST' else 'RETURNED')
+
+
+def test_admin_respects_blacklist_and_inactive_borrower_but_can_close(client, library, db):
+    loan = borrow(client, library)
+    assert client.patch(f'/users/{library["alice"].id}/blacklist', headers=library['admin_headers'],
+                        json={'is_blacklisted': True}).status_code == 200
+    admin_borrow(client, library, expected=403)
+    admin_close(client, library, loan, 'DAMAGED')
+    # Un compte désactivé par un import ou une intervention en base peut encore avoir un prêt.
+    other = borrow(client, library, 'bob')
+    library['bob'].is_active = False
+    db.commit()
+    admin_borrow(client, library, 'bob', expected=409)
+    admin_close(client, library, other, 'LOST')
+
+
+def test_admin_routes_permissions_and_validation(client, library):
+    loan = borrow(client, library)
+    payload = {'book_id': library['book'].id, 'user_id': library['bob'].id}
+    url = f'/admin/loans/{loan["id"]}/close'
+    assert client.post('/admin/loans', json=payload).status_code == 401
+    assert client.post(url, json={'copy_status': 'LOST'}).status_code == 401
+    assert client.post('/admin/loans', headers=library['alice_headers'], json=payload).status_code == 403
+    assert client.post(url, headers=library['alice_headers'], json={'copy_status': 'LOST'}).status_code == 403
+    assert client.post('/admin/loans', headers=library['admin_headers'], json={**payload, 'user_id': 999}).status_code == 404
+    assert client.post('/admin/loans', headers=library['admin_headers'], json={**payload, 'user_id': 0}).status_code == 422
+    assert client.post('/admin/loans', headers=library['admin_headers'], json={**payload, 'book_id': 999}).status_code == 404
+    assert client.post('/admin/loans/999/close', headers=library['admin_headers'], json={'copy_status': 'LOST'}).status_code == 404
+    for invalid in [{}, {'copy_status': 'WITHDRAWN'}, {'copy_status': 'LOST', 'closed_by_id': 999}]:
+        assert client.post(url, headers=library['admin_headers'], json=invalid).status_code == 422
+    assert stock(client, library)['available_stock'] == 1
+
+
+def test_admin_cannot_borrow_disabled_book(client, library):
+    assert client.delete(f'/books/{library["book"].id}', headers=library['admin_headers']).status_code == 200
+    admin_borrow(client, library, expected=409)
+
+
+@pytest.mark.parametrize('status', ['DAMAGED', 'LOST'])
+def test_failed_admin_closure_rolls_back_loan_and_copy(client, library, db, monkeypatch, status):
+    loan = borrow(client, library)
+    def fail_commit():
+        db.flush()
+        raise IntegrityError('close', {}, Exception('simulated failure'))
+    monkeypatch.setattr(db, 'commit', fail_commit)
+    admin_close(client, library, loan, status, expected=409)
+    assert db.get(Loan, loan['id']).closed_at is None
+    assert db.get(Loan, loan['id']).closed_by_id is None
+    assert db.get(BookCopy, loan['copy_id']).service_status == 'IN_SERVICE'
+    assert stock(client, library)['available_stock'] == 1

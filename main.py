@@ -17,7 +17,7 @@ from loans import router as loans_router
 from database import get_db
 from security import create_token, current_user, password, require_admin
 
-app = FastAPI(title='Bibliothèque', version='0.4.0')
+app = FastAPI(title='Bibliothèque', version='0.5.0')
 app.include_router(catalogue_router)
 app.include_router(loans_router)
 root_path = Path(__file__).resolve().parent

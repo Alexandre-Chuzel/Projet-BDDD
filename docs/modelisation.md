@@ -139,6 +139,8 @@ Sa quantité totale est 3 et sa quantité disponible est 1. Le retour en bon
 Les emprunts et retours verrouillent l'utilisateur, le livre puis l'exemplaire
 concerné, toujours dans cet ordre, avant les contrôles et les modifications.
 Les changements d'état verrouillent le livre puis l'exemplaire.
+Pour une opération administrative, les comptes de l'administrateur et du
+bénéficiaire sont verrouillés par identifiant croissant avant le livre.
 Sous Oracle, les verrous utilisent `SELECT ... FOR UPDATE`.
 Les contrôles et l'enregistrement se font dans la même transaction. L'index
 unique empêche aussi deux emprunts actifs d'un même exemplaire.

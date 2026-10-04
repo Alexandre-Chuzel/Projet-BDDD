@@ -167,6 +167,15 @@ class LoanCreate(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+class AdminLoanCreate(LoanCreate):
+    user_id: int = Field(gt=0)
+
+
+class LoanClosure(BaseModel):
+    copy_status: Literal['IN_SERVICE', 'DAMAGED', 'LOST']
+    model_config = ConfigDict(extra='forbid')
+
+
 class LoanResponse(BaseModel):
     id: int
     user_id: int
