@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -160,3 +160,22 @@ class BookCopyResponse(BookCopyCreate):
     id: int
     book_id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoanCreate(BaseModel):
+    book_id: int = Field(gt=0)
+    model_config = ConfigDict(extra='forbid')
+
+
+class LoanResponse(BaseModel):
+    id: int
+    user_id: int
+    copy_id: int
+    book_id: int
+    book_title: str
+    inventory_code: str
+    borrowed_at: datetime
+    closed_at: datetime | None
+    closure_reason: Literal['RETURNED', 'LOST'] | None
+    closed_by_id: int | None
+    is_active: bool

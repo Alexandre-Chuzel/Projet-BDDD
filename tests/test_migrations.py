@@ -74,6 +74,26 @@ def test_oracle_offline_sql(monkeypatch):
     assert "CREATE TABLE books" in sql
     assert "CREATE TABLE book_authors" in sql
     assert "CREATE TABLE book_copies" in sql
+    assert "CREATE TABLE loans" in sql
+    assert "CREATE UNIQUE INDEX uq_loans_active_copy" in sql
+
+
+def test_loans_migration_keeps_catalogue_and_downgrades():
+    engine = create_engine('sqlite://')
+    with engine.connect() as connection:
+        cfg = config()
+        cfg.attributes['connection'] = connection
+        command.upgrade(cfg, 'c003_catalogue')
+        connection.execute(text("INSERT INTO books (title, genre) VALUES ('Existant', 'Roman')"))
+        connection.commit()
+        command.upgrade(cfg, 'head')
+        assert 'loans' in inspect(connection).get_table_names()
+        assert len(inspect(connection).get_foreign_keys('loans')) == 3
+        assert connection.scalar(text('SELECT title FROM books')) == 'Existant'
+        command.downgrade(cfg, 'c003_catalogue')
+        assert 'loans' not in inspect(connection).get_table_names()
+        assert connection.scalar(text('SELECT title FROM books')) == 'Existant'
+    engine.dispose()
 
 
 def test_catalogue_migration_and_downgrade_keep_users():

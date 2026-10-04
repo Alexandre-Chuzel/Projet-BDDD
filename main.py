@@ -13,11 +13,13 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from catalogue import router as catalogue_router
+from loans import router as loans_router
 from database import get_db
 from security import create_token, current_user, password, require_admin
 
-app = FastAPI(title='Bibliothèque', version='0.3.0')
+app = FastAPI(title='Bibliothèque', version='0.4.0')
 app.include_router(catalogue_router)
+app.include_router(loans_router)
 root_path = Path(__file__).resolve().parent
 app.mount('/static', StaticFiles(directory=root_path / 'static'), name='static')
 templates = Jinja2Templates(directory=root_path / 'templates')
@@ -193,6 +195,9 @@ def delete_user(
 ):
     lock_accounts(db, admin)
     user = get_account(db, user_id)
+    active_loan = db.scalar(select(models.Loan.id).where(models.Loan.user_id == user.id, models.Loan.closed_at.is_(None)))
+    if active_loan is not None:
+        raise HTTPException(status_code=409, detail='Cet utilisateur possède des emprunts en cours')
     protect_last_admin(db, user)
     user.is_active = False
     db.commit()

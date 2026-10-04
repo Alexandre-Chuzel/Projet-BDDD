@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -96,11 +96,14 @@ def get_authors(db, author_ids):
 
 
 def book_response(db, book, user):
-    # Les emprunts seront pris en compte à leur ajout ; aucun prêt n'existe encore.
+    active_loan = select(models.Loan.id).where(
+        models.Loan.copy_id == models.BookCopy.id, models.Loan.closed_at.is_(None),
+    ).exists()
+    available_copy = and_(models.BookCopy.service_status == 'IN_SERVICE', ~active_loan)
     # Une seule requête garde les deux quantités cohérentes entre elles.
     total, available = db.execute(select(
         func.count(models.BookCopy.id),
-        func.coalesce(func.sum(case((models.BookCopy.service_status == 'IN_SERVICE', 1), else_=0)), 0),
+        func.coalesce(func.sum(case((available_copy, 1), else_=0)), 0),
     ).where(models.BookCopy.book_id == book.id, models.BookCopy.service_status != 'WITHDRAWN')).one()
     data = {
         'id': book.id, 'title': book.title, 'genre': book.genre, 'authors': book.authors,
@@ -175,6 +178,11 @@ def update_book(book_id: int, data: schemas.BookCreate, admin: models.User = Dep
 @router.delete('/books/{book_id}')
 def delete_book(book_id: int, admin: models.User = Depends(require_admin), db: Session = Depends(get_db)):
     book = get_book(db, book_id, lock=True)
+    active_loan = db.scalar(select(models.Loan.id).join(models.BookCopy, models.Loan.copy_id == models.BookCopy.id).where(
+        models.BookCopy.book_id == book.id, models.Loan.closed_at.is_(None),
+    ))
+    if active_loan is not None:
+        raise HTTPException(status_code=409, detail='Ce livre possède des emprunts en cours')
     book.is_active = False
     db.commit()
     return {'message': 'Livre désactivé'}
@@ -195,6 +203,12 @@ def get_copy(db, book_id, copy_id):
     if copy is None:
         raise HTTPException(status_code=404, detail='Exemplaire introuvable pour ce livre')
     return copy
+
+
+def ensure_copy_not_borrowed(db, copy):
+    active_loan = db.scalar(select(models.Loan.id).where(models.Loan.copy_id == copy.id, models.Loan.closed_at.is_(None)))
+    if active_loan is not None:
+        raise HTTPException(status_code=409, detail='Cet exemplaire est emprunté ; clôturer son emprunt avant de modifier son état')
 
 
 @router.get('/books/{book_id}/copies', response_model=list[schemas.BookCopyResponse])
@@ -222,6 +236,7 @@ def create_copy(book_id: int, data: schemas.BookCopyCreate, admin: models.User =
 def update_copy(book_id: int, copy_id: int, data: schemas.BookCopyUpdate, admin: models.User = Depends(require_admin), db: Session = Depends(get_db)):
     get_book(db, book_id, lock=True)
     copy = get_copy(db, book_id, copy_id)
+    ensure_copy_not_borrowed(db, copy)
     copy.service_status = data.service_status
     db.commit()
     db.refresh(copy)
@@ -232,6 +247,7 @@ def update_copy(book_id: int, copy_id: int, data: schemas.BookCopyUpdate, admin:
 def withdraw_copy(book_id: int, copy_id: int, admin: models.User = Depends(require_admin), db: Session = Depends(get_db)):
     get_book(db, book_id, lock=True)
     copy = get_copy(db, book_id, copy_id)
+    ensure_copy_not_borrowed(db, copy)
     copy.service_status = 'WITHDRAWN'
     db.commit()
     db.refresh(copy)

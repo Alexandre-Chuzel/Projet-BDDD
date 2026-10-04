@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, ForeignKey, Identity, Integer, String, Table, false, true
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Identity, Index, Integer, String, Table, false, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -72,4 +72,30 @@ class BookCopy(Base):
     inventory_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
     service_status: Mapped[str] = mapped_column(
         String(15), nullable=False, default='IN_SERVICE', server_default='IN_SERVICE',
+    )
+    book: Mapped[Book] = relationship()
+
+
+class Loan(Base):
+    __tablename__ = 'loans'
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
+    copy_id: Mapped[int] = mapped_column(ForeignKey('book_copies.id'), nullable=False, index=True)
+    borrowed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closure_reason: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    closed_by_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'), nullable=True, index=True)
+    copy: Mapped[BookCopy] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            '(closed_at IS NULL AND closure_reason IS NULL AND closed_by_id IS NULL) OR '
+            '(closed_at IS NOT NULL AND closure_reason IS NOT NULL AND closed_by_id IS NOT NULL '
+            "AND closure_reason IN ('RETURNED', 'LOST') AND closed_at >= borrowed_at)",
+            name='ck_loans_closure',
+        ),
+        Index('ix_loans_user_borrowed', user_id, borrowed_at),
+        # Les emprunts clôturés donnent NULL : seule la copie prêtée doit être unique.
+        Index('uq_loans_active_copy', text('CASE WHEN closed_at IS NULL THEN copy_id END'), unique=True),
     )

@@ -46,6 +46,10 @@ sa mise à jour. Les anciens comptes deviennent des utilisateurs actifs ordinair
 avec leurs clés étrangères, contraintes et index. Elle ne modifie pas les
 comptes. Son annulation supprime le catalogue et ses exemplaires.
 
+`l004_loans` ajoute les emprunts, leurs dates de clôture et un index unique
+qui interdit deux emprunts en cours sur le même exemplaire. Son annulation
+supprime les emprunts ; les comptes et le catalogue sont conservés.
+
 Si `users` existe sans révision Alembic, vérifier le schéma et les données avant
 de reprendre l'historique. Ne pas lancer une initialisation ni un `stamp`
 sans cette vérification. Un `downgrade base` supprime la table des utilisateurs.
@@ -75,10 +79,9 @@ administrateur rétrogradé perd ses droits avec son token existant. La réactiv
 permet à nouveau l'accès, y compris avec un token encore valide.
 Les emails restent réservés après désactivation ; les doublons renvoient une erreur 409.
 
-La liste noire autorise la connexion et la consultation. Son contrôle lors
-d'un emprunt sera ajouté avec la gestion des emprunts, ainsi que l'interdiction
-de désactiver un compte possédant des emprunts en cours. Les emprunts ne sont
-pas encore implémentés.
+La liste noire autorise la connexion, la consultation et le retour des livres,
+mais interdit les nouveaux emprunts. Un compte possédant un emprunt en cours
+ne peut pas être désactivé.
 
 ## Catalogue
 
@@ -113,11 +116,10 @@ et `available_stock`, et peut consulter les livres désactivés avec
 `include_inactive=true`. Un livre désactivé est masqué aux utilisateurs.
 
 Les quantités sont calculées depuis les exemplaires : les exemplaires retirés
-ne comptent plus dans le total ; seuls ceux en service sont disponibles.
+ne comptent plus dans le total ; seuls ceux en service sans emprunt en cours sont disponibles.
 Les exemplaires perdus ou abîmés restent dans l'inventaire, sans être disponibles.
-La gestion des emprunts ajoutera ensuite l'exclusion des exemplaires prêtés et
-les contrôles empêchant le retrait d'un exemplaire ou la suppression d'un livre
-ayant un emprunt en cours.
+La désactivation d'un livre ayant un emprunt en cours est refusée, tout comme
+le retrait ou le changement d'état d'un exemplaire prêté.
 
 Exemple de création d'un livre après création de son auteur :
 
@@ -132,6 +134,33 @@ Exemple de création d'un livre après création de son auteur :
 
 Puis ajouter les exemplaires avec `POST /books/{book_id}/copies`, par exemple
 `{"inventory_code": "EX-001"}`. Une fiche sans exemplaire est indisponible.
+
+## Emprunts et retours
+
+- `POST /loans` avec `{"book_id": 1}` : emprunt par le compte connecté.
+  L'API choisit un exemplaire en service et disponible. Un livre désactivé
+  ou sans exemplaire disponible renvoie 409 ; la liste noire renvoie 403.
+- `POST /loans/{loan_id}/return` : retour de son propre emprunt.
+  Un emprunt appartenant à un autre compte renvoie 403 ; un emprunt déjà
+  clôturé renvoie 409. L'exemplaire redevient disponible.
+- `GET /loans/me` : historique personnel, avec `active_only`, `offset` et `limit`.
+- `GET /loans` : historique administrateur, avec les mêmes paramètres et
+  les filtres facultatifs `user_id` et `book_id`.
+- `GET /loans/{loan_id}` : détail d'un emprunt personnel, ou de tout emprunt
+  pour un administrateur.
+
+Chaque prêt concerne un exemplaire identifié par son numéro d'inventaire.
+Plusieurs exemplaires d'un livre permettent plusieurs prêts simultanés.
+Le retour conserve l'emprunt dans l'historique, avec sa date et son auteur.
+Les dates sont stockées et renvoyées en UTC, sans indication de fuseau.
+
+Les emprunts et retours verrouillent le compte, le livre puis l'exemplaire
+dans leur transaction. L'index unique protège aussi la base contre deux
+emprunts en cours sur le même exemplaire. La disponibilité est recalculée
+depuis les exemplaires et les emprunts à chaque consultation.
+
+La supervision permettant à un administrateur d'emprunter ou de clôturer
+pour un autre compte, ainsi que les retours abîmés et les pertes, reste à ajouter.
 
 ## Premier administrateur
 
@@ -158,8 +187,17 @@ python -m pytest -q
 Les tests API utilisent une base SQLite temporaire et une clé de test ; ils
 n'accèdent pas à la base Oracle du projet. Les tests de migration vérifient
 l'initialisation, la conservation des données et le SQL généré pour Oracle.
-Les vérifications sur Oracle réel restent nécessaires pour valider les
-particularités du moteur et les futurs emprunts concurrents.
+Un test manuel vérifie les emprunts concurrents sur la base Oracle configurée :
+
+```powershell
+python tests/oracle_concurrency.py
+```
+
+Il crée des données dédiées, lance deux demandes simultanées pour un seul
+exemplaire et attend un succès 201 et un refus 409. Il vérifie aussi la
+contrainte unique, le retour et le réemprunt. Ses données sont supprimées
+dans un bloc `finally`. Les migrations doivent avoir été appliquées avant
+son lancement.
 
 ## Docker
 
