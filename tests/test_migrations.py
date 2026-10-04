@@ -70,3 +70,26 @@ def test_oracle_offline_sql(monkeypatch):
     assert "RENAME COLUMN name TO first_name" in sql
     assert "RENAME COLUMN password TO password_hash" in sql
     assert "ck_users_role" in sql
+    assert "CREATE TABLE authors" in sql
+    assert "CREATE TABLE books" in sql
+    assert "CREATE TABLE book_authors" in sql
+    assert "CREATE TABLE book_copies" in sql
+
+
+def test_catalogue_migration_and_downgrade_keep_users():
+    engine = create_engine('sqlite://')
+    with engine.connect() as connection:
+        cfg = config()
+        cfg.attributes['connection'] = connection
+        command.upgrade(cfg, 'u002_user_management')
+        connection.execute(text("INSERT INTO users (first_name, email, password_hash) VALUES ('Alice', 'alice@example.com', 'hashed')"))
+        connection.commit()
+        command.upgrade(cfg, 'head')
+        inspector = inspect(connection)
+        assert {'authors', 'books', 'book_authors', 'book_copies'} <= set(inspector.get_table_names())
+        assert len(inspector.get_foreign_keys('book_authors')) == 2
+        assert len(inspector.get_foreign_keys('book_copies')) == 1
+        command.downgrade(cfg, 'u002_user_management')
+        assert 'books' not in inspect(connection).get_table_names()
+        assert connection.scalar(text('SELECT password_hash FROM users')) == 'hashed'
+    engine.dispose()

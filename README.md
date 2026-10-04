@@ -42,6 +42,10 @@ Les noms existants sont conservés dans `first_name`, les mots de passe hachés
 dans `password_hash`. Le nom de famille des anciens comptes reste vide jusqu'à
 sa mise à jour. Les anciens comptes deviennent des utilisateurs actifs ordinaires.
 
+`c003_catalogue` ajoute `authors`, `books`, `book_authors` et `book_copies`,
+avec leurs clés étrangères, contraintes et index. Elle ne modifie pas les
+comptes. Son annulation supprime le catalogue et ses exemplaires.
+
 Si `users` existe sans révision Alembic, vérifier le schéma et les données avant
 de reprendre l'historique. Ne pas lancer une initialisation ni un `stamp`
 sans cette vérification. Un `downgrade base` supprime la table des utilisateurs.
@@ -73,8 +77,61 @@ Les emails restent réservés après désactivation ; les doublons renvoient une
 
 La liste noire autorise la connexion et la consultation. Son contrôle lors
 d'un emprunt sera ajouté avec la gestion des emprunts, ainsi que l'interdiction
-de désactiver un compte possédant des emprunts en cours. Le catalogue et les
-emprunts ne sont pas encore implémentés.
+de désactiver un compte possédant des emprunts en cours. Les emprunts ne sont
+pas encore implémentés.
+
+## Catalogue
+
+Les routes de consultation exigent une connexion. Les routes de création,
+modification, suppression et gestion des exemplaires exigent le rôle `ADMIN`.
+
+- `GET /authors` et `GET /authors/{author_id}` : consultation des auteurs.
+  La liste accepte `name`, `offset` et `limit`.
+- `POST /authors`, `PUT /authors/{author_id}` et `DELETE /authors/{author_id}` :
+  gestion des auteurs. Un auteur associé à un livre ne peut pas être supprimé.
+- `GET /books` : catalogue, avec les filtres cumulables `title`, `author` et
+  `genre`, ainsi que `offset` et `limit`. La recherche ne distingue pas la casse.
+- `GET /books/{book_id}` : informations du livre et de ses auteurs.
+- `POST /books` et `PUT /books/{book_id}` : gestion d'une édition, avec au
+  moins un identifiant dans `author_ids`.
+- `DELETE /books/{book_id}` et `POST /books/{book_id}/restore` : désactivation
+  et réactivation. Les exemplaires et les liens vers les auteurs sont conservés.
+- `GET /books/{book_id}/copies` : liste administrateur des exemplaires,
+  avec `offset` et `limit`.
+- `POST /books/{book_id}/copies` : ajout d'un exemplaire avec `inventory_code`
+  et éventuellement `service_status` (par défaut `IN_SERVICE`).
+- `PATCH /books/{book_id}/copies/{copy_id}` : modification de l'état de service.
+- `DELETE /books/{book_id}/copies/{copy_id}` : retrait logique avec l'état `WITHDRAWN`.
+
+Les états sont `IN_SERVICE`, `DAMAGED`, `LOST` et `WITHDRAWN`. Un numéro
+d'inventaire est normalisé en majuscules et reste réservé après retrait.
+L'ISBN est facultatif ; les formats ISBN-10 et ISBN-13 sont validés et stockés
+en ISBN-13 pour identifier une édition de manière unique.
+
+Un utilisateur voit `is_available`. Un administrateur reçoit aussi `total_stock`
+et `available_stock`, et peut consulter les livres désactivés avec
+`include_inactive=true`. Un livre désactivé est masqué aux utilisateurs.
+
+Les quantités sont calculées depuis les exemplaires : les exemplaires retirés
+ne comptent plus dans le total ; seuls ceux en service sont disponibles.
+Les exemplaires perdus ou abîmés restent dans l'inventaire, sans être disponibles.
+La gestion des emprunts ajoutera ensuite l'exclusion des exemplaires prêtés et
+les contrôles empêchant le retrait d'un exemplaire ou la suppression d'un livre
+ayant un emprunt en cours.
+
+Exemple de création d'un livre après création de son auteur :
+
+```json
+{
+  "title": "Les Misérables",
+  "genre": "Roman",
+  "author_ids": [1],
+  "publication_date": "1862-01-01"
+}
+```
+
+Puis ajouter les exemplaires avec `POST /books/{book_id}/copies`, par exemple
+`{"inventory_code": "EX-001"}`. Une fiche sans exemplaire est indisponible.
 
 ## Premier administrateur
 

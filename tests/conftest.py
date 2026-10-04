@@ -17,6 +17,8 @@ from main import app
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    with engine.connect() as connection:
+        connection.exec_driver_sql('PRAGMA foreign_keys=ON')
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         yield session

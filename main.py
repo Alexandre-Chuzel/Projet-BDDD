@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from catalogue import router as catalogue_router
 from database import get_db
 from security import create_token, current_user, password, require_admin
 
-app = FastAPI(title='Bibliothèque', version='0.2.0')
+app = FastAPI(title='Bibliothèque', version='0.3.0')
+app.include_router(catalogue_router)
 root_path = Path(__file__).resolve().parent
 app.mount('/static', StaticFiles(directory=root_path / 'static'), name='static')
 templates = Jinja2Templates(directory=root_path / 'templates')

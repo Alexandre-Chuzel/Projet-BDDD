@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -51,4 +52,111 @@ class UserResponse(BaseModel):
     is_blacklisted: bool
     is_active: bool
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AuthorCreate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    model_config = ConfigDict(extra='forbid')
+
+    @field_validator('first_name', 'last_name', mode='before')
+    @classmethod
+    def strip_names(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class AuthorResponse(AuthorCreate):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    genre: str = Field(min_length=1, max_length=100)
+    author_ids: list[int] = Field(min_length=1)
+    isbn: str | None = Field(default=None, max_length=13)
+    description: str | None = Field(default=None, max_length=1000)
+    publisher: str | None = Field(default=None, max_length=150)
+    publication_date: date | None = None
+    model_config = ConfigDict(extra='forbid')
+
+    @field_validator('title', 'genre', 'publisher', 'description', mode='before')
+    @classmethod
+    def strip_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator('author_ids')
+    @classmethod
+    def validate_authors(cls, values):
+        if any(value <= 0 for value in values) or len(set(values)) != len(values):
+            raise ValueError('Les identifiants des auteurs doivent être positifs et distincts')
+        return values
+
+    @field_validator('isbn', mode='before')
+    @classmethod
+    def normalize_isbn(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError('ISBN invalide')
+        value = value.replace('-', '').replace(' ', '').upper()
+        if len(value) == 10 and value[:9].isascii() and value[:9].isdigit():
+            if value[-1] not in '0123456789X':
+                raise ValueError('ISBN invalide')
+            digits = [int(c) if c != 'X' else 10 for c in value]
+            if sum((10 - i) * digit for i, digit in enumerate(digits)) % 11 != 0:
+                raise ValueError('Clé ISBN invalide')
+            # Une édition ne doit pas être dupliquée sous ses ISBN-10 et ISBN-13.
+            prefix = '978' + value[:9]
+            checksum = (10 - sum(int(c) * (1 if i % 2 == 0 else 3)
+                                 for i, c in enumerate(prefix)) % 10) % 10
+            return prefix + str(checksum)
+        if len(value) != 13 or not value.isascii() or not value.isdigit() or not value.startswith(('978', '979')):
+            raise ValueError('ISBN invalide')
+        if sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(value)) % 10 != 0:
+            raise ValueError('Clé ISBN invalide')
+        return value
+
+
+class BookResponse(BaseModel):
+    id: int
+    title: str
+    genre: str
+    authors: list[AuthorResponse]
+    isbn: str | None
+    description: str | None
+    publisher: str | None
+    publication_date: date | None
+    is_active: bool
+    is_available: bool
+
+
+class AdminBookResponse(BookResponse):
+    total_stock: int
+    available_stock: int
+
+
+CopyStatus = Literal['IN_SERVICE', 'DAMAGED', 'LOST', 'WITHDRAWN']
+
+
+class BookCopyCreate(BaseModel):
+    inventory_code: str = Field(min_length=1, max_length=50)
+    service_status: CopyStatus = 'IN_SERVICE'
+    model_config = ConfigDict(extra='forbid')
+
+    @field_validator('inventory_code', mode='before')
+    @classmethod
+    def normalize_code(cls, value):
+        return value.strip().upper() if isinstance(value, str) else value
+
+
+class BookCopyUpdate(BaseModel):
+    service_status: CopyStatus
+    model_config = ConfigDict(extra='forbid')
+
+
+class BookCopyResponse(BookCopyCreate):
+    id: int
+    book_id: int
     model_config = ConfigDict(from_attributes=True)

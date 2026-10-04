@@ -98,6 +98,7 @@ les comptes anciens dont l'identité n'a pas encore été complétée.
 - Compte et livre initialement actifs ; liste noire initialement fausse.
 - ISBN normalisé et unique lorsqu'il est renseigné. Il identifie une édition,
   tandis que le numéro d'inventaire identifie un exemplaire physique.
+  Les ISBN-10 sont convertis en ISBN-13 après vérification de leur clé.
 - Numéro d'inventaire obligatoire, unique et jamais réutilisé après retrait.
 - État limité à `IN_SERVICE`, `DAMAGED`, `LOST` ou `WITHDRAWN`.
 - Clés étrangères obligatoires pour chaque exemplaire, emprunt et association auteur.
