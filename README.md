@@ -33,10 +33,14 @@ Swagger est disponible sur `http://127.0.0.1:8000/docs`.
 Le démarrage de l'API ne crée ni ne modifie les tables : seul Alembic gère le schéma.
 
 La migration `b001_initial_users` crée `users` sur une base vide, avant la
-révision `a37a2056e593` qui rend le mot de passe obligatoire. Une base déjà
-marquée `a37a2056e593` conserve sa révision et ses données ; la migration de
-création n'y est pas rejouée. La révision historique conserve son opération
-Oracle et utilise le mode batch pour les tests SQLite.
+révision `a37a2056e593` qui rend le mot de passe obligatoire.
+`u002_user_management` ajoute les rôles, la liste noire, le téléphone et
+la suppression logique. Une base déjà marquée `a37a2056e593` reçoit uniquement
+cette nouvelle migration ; la création de table n'est pas rejouée.
+
+Les noms existants sont conservés dans `first_name`, les mots de passe hachés
+dans `password_hash`. Le nom de famille des anciens comptes reste vide jusqu'à
+sa mise à jour. Les anciens comptes deviennent des utilisateurs actifs ordinaires.
 
 Si `users` existe sans révision Alembic, vérifier le schéma et les données avant
 de reprendre l'historique. Ne pas lancer une initialisation ni un `stamp`
@@ -44,20 +48,49 @@ sans cette vérification. Un `downgrade base` supprime la table des utilisateurs
 
 ## API disponible
 
-- `POST /users` : inscription avec `name`, `email` et `password`.
+- `POST /users` : inscription avec `first_name`, `last_name`, `email`, `password`
+  et éventuellement `phone`. Le rôle est toujours `USER`.
 - `POST /login` : formulaire OAuth2 ; le champ `username` contient l'email.
 - `GET /private` : vérification d'un accès authentifié.
-- `GET`, `PUT`, `DELETE /users/{user_id}` : accès au compte de l'utilisateur connecté.
+- `GET /users/me` : consultation du compte connecté.
+- `GET /users/{user_id}` : consultation de son compte, ou de tout compte pour un administrateur.
+- `GET /users` : liste administrateur, avec pagination `offset` / `limit` et
+  `include_inactive=true` pour inclure les comptes désactivés.
+- `POST /admin/users` : création d'un compte par un administrateur, avec rôle `USER` ou `ADMIN`.
+- `PUT /users/{user_id}` : modification administrateur de l'identité et,
+  facultativement, du mot de passe et du rôle.
+- `PATCH /users/{user_id}/blacklist` : mise à jour administrateur avec
+  `{"is_blacklisted": true}` ou `false`.
+- `DELETE /users/{user_id}` : désactivation administrateur ; les données restent en base.
+- `POST /users/{user_id}/restore` : réactivation administrateur.
 
 Les mots de passe sont hachés avec Argon2. Les tokens JWT expirent après
-15 minutes et identifient le compte par son ID. Un compte supprimé ne peut
-plus utiliser son token. Les emails sont normalisés ; les doublons renvoient
-une erreur 409.
+15 minutes et identifient le compte par son ID. L'état et le rôle du compte
+sont relus en base à chaque requête : un compte désactivé est refusé, et un
+administrateur rétrogradé perd ses droits avec son token existant. La réactivation
+permet à nouveau l'accès, y compris avec un token encore valide.
+Les emails restent réservés après désactivation ; les doublons renvoient une erreur 409.
 
-Le socle utilise encore le champ `name` et une suppression physique des comptes.
-Les rôles administrateur, la suppression logique, le catalogue et les emprunts
-seront ajoutés avec leurs migrations. La liste globale des utilisateurs est
-désactivée jusqu'à l'ajout des droits administrateur.
+La liste noire autorise la connexion et la consultation. Son contrôle lors
+d'un emprunt sera ajouté avec la gestion des emprunts, ainsi que l'interdiction
+de désactiver un compte possédant des emprunts en cours. Le catalogue et les
+emprunts ne sont pas encore implémentés.
+
+## Premier administrateur
+
+Inscrire un compte avec `POST /users`, puis promouvoir ce compte depuis le
+terminal local :
+
+```powershell
+python create_admin.py alice@example.com
+```
+
+Remplacer l'email par celui du compte inscrit. La commande conserve le mot
+de passe et refuse de fonctionner si un administrateur actif existe déjà.
+Ensuite, seuls les administrateurs gèrent les rôles depuis l'API.
+Le dernier administrateur actif ne peut pas être supprimé ou rétrogradé.
+Les opérations de gestion correspondantes verrouillent les comptes avant
+le contrôle et la modification, pour sérialiser les demandes concurrentes.
 
 ## Tests
 

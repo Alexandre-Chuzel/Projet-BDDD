@@ -58,6 +58,12 @@ def current_user(
         raise credentials_error from None
 
     user = db.get(User, user_id)
-    if user is None:
+    if user is None or not user.is_active:
         raise credentials_error
+    return user
+
+
+def require_admin(user: User = Depends(current_user)) -> User:
+    if user.role != 'ADMIN' or not user.is_active:
+        raise HTTPException(status_code=403, detail='Accès réservé aux administrateurs')
     return user

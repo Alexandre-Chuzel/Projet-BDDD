@@ -88,6 +88,9 @@ Les tables physiques sont `users`, `authors`, `books`, `book_authors`,
 `book_copies` et `loans`. Les identifiants sont générés par Oracle ;
 `book_authors` utilise une clé primaire composée.
 
+Le nom de famille est obligatoire à l'inscription. Il peut rester absent pour
+les comptes anciens dont l'identité n'a pas encore été complétée.
+
 ## Contraintes
 
 - Email obligatoire, normalisé et unique.
@@ -150,7 +153,7 @@ emprunt reste clôturé. Chaque clôture conserve l'identifiant de son auteur.
 
 Les comptes et livres sont supprimés logiquement avec `is_active = false`.
 Leur suppression est refusée tant qu'ils ont des emprunts en cours. Le retrait
-d'un exemplaire prêté est également refusé. Les modifications des administrateurs
-verrouillent les comptes administrateurs dans un ordre commun avant de vérifier
+d'un exemplaire prêté est également refusé. Les modifications de rôle et suppressions
+verrouillent les comptes dans un ordre commun avant de vérifier
 qu'au moins un administrateur actif subsiste, pour éviter deux suppressions ou
 rétrogradations concurrentes du dernier administrateur.
